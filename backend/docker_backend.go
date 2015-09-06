@@ -94,6 +94,17 @@ func (backend *dockerBackend) BuildRecipe(stagingGuid string, request cc_message
 	)
 
 	runActionArguments := []string{"-outputMetadataJSONFilename", DockerBuilderOutputPath, "-dockerRef", lifecycleData.DockerImageUrl}
+	insecureRegistrys := strings.Join(backend.config.InsecureRegistries, ",")
+	// also treate DockerImageUrl'host as insecure
+	insecureHost := getDockerImageUrlHost(lifecycleData.DockerImageUrl,backend.logger)
+	if insecureHost != "" {
+		if insecureRegistrys != "" {
+			insecureRegistrys = insecureRegistrys+","+insecureHost
+		} else {
+			insecureRegistrys = insecureHost
+		}
+	}
+	
 	if cacheDockerImage {
 		registryServices, err := getDockerRegistryServices(backend.config.ConsulCluster, backend.logger)
 		if err != nil {
@@ -103,9 +114,24 @@ func (backend *dockerBackend) BuildRecipe(stagingGuid string, request cc_message
 		request.EgressRules = append(request.EgressRules, registryRules...)
 
 		registryAddresses := strings.Join(buildDockerRegistryAddresses(registryServices), ",")
-
-		runActionArguments = addDockerCachingArguments(runActionArguments, registryAddresses, backend.config.InsecureDockerRegistry, lifecycleData)
+		if insecureRegistrys != "" {
+			insecureRegistrys = insecureRegistrys+","+registryAddresses
+		} else {
+			insecureRegistrys = registryAddresses
+		}
+		runActionArguments = addDockerCachingArguments(runActionArguments, registryAddresses, backend.config.InsecureDockerRegistry, insecureRegistrys, lifecycleData)
+	} else {
+		if backend.config.InsecureDockerRegistry && insecureRegistrys != "" {
+			runActionArguments = append(runActionArguments, "-insecureDockerRegistries", insecureRegistrys)
+		}
+		
+		// maybe also have credentials when DIEGO_DOCKER_CACHE is false
+		runActionArguments = addDockerCredentialArguments(runActionArguments,lifecycleData)
 	}
+	
+	backend.logger.Info("insecureRegistrys",lager.Data{
+		"insecureRegistrys": insecureRegistrys,
+	})
 
 	fileDescriptorLimit := uint64(request.FileDescriptors)
 
@@ -298,14 +324,21 @@ func getDockerRegistryServices(consulCluster string, backendLogger lager.Logger)
 	return ips, nil
 }
 
-func addDockerCachingArguments(args []string, registryAddresses string, insecureRegistry bool, stagingData cc_messages.DockerStagingData) []string {
+func addDockerCachingArguments(args []string, registryAddresses string, insecureRegistry bool, insecureRegistrys string, stagingData cc_messages.DockerStagingData) []string {
 	args = append(args, "-cacheDockerImage")
 
+	// cache registry addresses
 	args = append(args, "-dockerRegistryAddresses", registryAddresses)
-	if insecureRegistry {
-		args = append(args, "-insecureDockerRegistries", registryAddresses)
+	
+	// cache registry is insecure
+	if insecureRegistry && insecureRegistrys != "" {
+		args = append(args, "-insecureDockerRegistries", insecureRegistrys)
 	}
 
+	return addDockerCredentialArguments(args,stagingData)
+}
+
+func addDockerCredentialArguments(args []string, stagingData cc_messages.DockerStagingData) []string {
 	if len(stagingData.DockerLoginServer) > 0 {
 		args = append(args, "-dockerLoginServer", stagingData.DockerLoginServer)
 	}
@@ -316,4 +349,29 @@ func addDockerCachingArguments(args []string, registryAddresses string, insecure
 	}
 
 	return args
+}
+
+func getDockerImageUrlHost(dockerImageUrl string, logger lager.Logger) string {
+	fakeUrl := dockerImageUrl
+	//[registry/][scope/]repository[#tag] format
+	if !strings.Contains(fakeUrl,"://") {
+		fakeUrl = "docker://"+dockerImageUrl
+	}
+	parts, err := url.Parse(fakeUrl)
+	if err != nil {
+		logger.Error("getDockerImageUrlHost failure", err, lager.Data{
+			"dockerImageUrl": dockerImageUrl,
+		})
+		return ""
+	}
+	
+	repoHost := parts.Host
+	if repoHost != "" && !strings.Contains(repoHost,":") {
+		repoHost = repoHost+":80"
+	}
+	
+	logger.Info("getDockerImageUrlHost",lager.Data{
+		"host": repoHost,
+	})
+	return repoHost
 }

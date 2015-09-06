@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strings"
 
 	"github.com/cloudfoundry/dropsonde"
 	"github.com/pivotal-golang/clock"
@@ -71,6 +72,12 @@ var insecureDockerRegistry = flag.Bool(
 	"insecureDockerRegistry",
 	false,
 	"allows use of insecure Private Docker Registry",
+)
+
+var insecureRegistries = flag.String(
+	"insecureDockerRegistryList",
+	"",
+	"comma-separated list of docker registries to allow connection to even if they are not secure",
 )
 
 var consulCluster = flag.String(
@@ -166,6 +173,7 @@ func initializeBackends(logger lager.Logger, lifecycles flags.LifecycleMap) map[
 		FileServerURL:          *fileServerURL,
 		Lifecycles:             lifecycles,
 		InsecureDockerRegistry: *insecureDockerRegistry,
+		InsecureRegistries:		strings.Split(*insecureRegistries, ","),
 		ConsulCluster:          *consulCluster,
 		SkipCertVerify:         *skipCertVerify,
 		Sanitizer:              cc_messages.SanitizeErrorMessage,

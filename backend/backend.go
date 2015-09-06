@@ -36,6 +36,7 @@ type Config struct {
 	FileServerURL          string
 	Lifecycles             map[string]string
 	InsecureDockerRegistry bool
+	InsecureRegistries	   []string
 	ConsulCluster          string
 	SkipCertVerify         bool
 	Sanitizer              FailureReasonSanitizer
